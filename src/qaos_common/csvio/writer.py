@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import codecs
 import csv
+import io
 import os
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, BinaryIO
 
 from qaos_common.errors import CSVLimitError, QAOSCommonError
 from qaos_common.limits import DEFAULT_LIMITS, ProcessingLimits
 from qaos_common.schemas.dictionary import DICTIONARY_COLUMNS
-from qaos_common.schemas.qaos import QAOS_COLUMNS
+from qaos_common.schemas.qaos import ARRAY_COLUMNS, QAOS_COLUMNS, serialize_array
 
 from .profiles import CSVProfile, DictionaryCSVProfile, QAOSCSVProfile
 
@@ -21,7 +23,7 @@ from .profiles import CSVProfile, DictionaryCSVProfile, QAOSCSVProfile
 class CSVWriter:
     def __init__(
         self,
-        destination: str | PathLike[str],
+        destination: str | PathLike[str] | BinaryIO,
         *,
         columns: Sequence[str],
         profile: CSVProfile | None = None,
@@ -30,7 +32,8 @@ class CSVWriter:
         input_path: str | PathLike[str] | None = None,
         keep_checkpoint_on_error: bool = False,
     ) -> None:
-        self.destination = Path(destination)
+        self.destination = Path(destination) if isinstance(destination, (str, PathLike)) else None
+        self._external = destination if self.destination is None else None
         self.columns = tuple(columns)
         self.profile = profile or CSVProfile()
         self.limits = limits
@@ -38,60 +41,79 @@ class CSVWriter:
         self.input_path = Path(input_path) if input_path is not None else None
         self.keep_checkpoint_on_error = keep_checkpoint_on_error
         self.checkpoint_path: Path | None = None
-        self._stream: TextIO | None = None
-        self._writer: csv.DictWriter[str] | None = None
+        self._stream: BinaryIO | None = None
+        self._bytes_written = 0
+        self._encoder = codecs.getincrementalencoder(self.profile.encoding)()
+        self._entered = False
         self._temporary_path: Path | None = None
         self._rows_written = 0
 
     def __enter__(self) -> CSVWriter:
+        if self._entered:
+            raise RuntimeError("CSVWriter instances are single-use")
+        self._entered = True
         if not self.columns or len(set(self.columns)) != len(self.columns):
             raise ValueError("columns must be non-empty and unique")
-        destination = self.destination.resolve()
-        if (
-            self.input_path is not None
-            and destination == self.input_path.resolve()
-            and not self.overwrite
-        ):
-            raise FileExistsError("Refusing to overwrite the input file")
-        if self.destination.exists() and not self.overwrite:
-            raise FileExistsError(f"Destination already exists: {self.destination}")
-        self.destination.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{self.destination.name}.", suffix=".tmp", dir=self.destination.parent
-        )
-        self._temporary_path = Path(temporary)
-        encoding = "utf-8-sig" if self.profile.write_bom else self.profile.encoding
-        self._stream = os.fdopen(descriptor, "w", encoding=encoding, newline="")
-        self._writer = csv.DictWriter(
-            self._stream,
-            fieldnames=self.columns,
-            delimiter=self.profile.delimiter,
-            lineterminator=self.profile.line_ending,
-            quoting=self.profile.quoting,
-            extrasaction="raise",
-        )
-        self._writer.writeheader()
-        self._enforce_output_size()
+        if self.destination is None:
+            self._stream = self._external  # type: ignore[assignment]
+        else:
+            destination = self.destination.resolve()
+            if (
+                self.input_path is not None
+                and destination == self.input_path.resolve()
+                and not self.overwrite
+            ):
+                raise FileExistsError("Refusing to overwrite the input file")
+            if self.destination.exists() and not self.overwrite:
+                raise FileExistsError(f"Destination already exists: {self.destination}")
+            self.destination.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=f".{self.destination.name}.", suffix=".tmp", dir=self.destination.parent
+            )
+            self._temporary_path = Path(temporary)
+            self._stream = os.fdopen(descriptor, "wb")
+        try:
+            if self.profile.write_bom:
+                self._write_bytes(b"\xef\xbb\xbf")
+            self._emit(self.columns)
+        except BaseException:
+            self._abort()
+            raise
         return self
 
     def write_row(self, row: Mapping[str, Any]) -> None:
-        if self._writer is None:
+        if self._stream is None:
             raise RuntimeError("Use CSVWriter as a context manager")
         if self._rows_written >= self.limits.max_rows:
             raise CSVLimitError(
                 "CSV has more rows than the configured limit",
                 code="CSV_OUTPUT_TOO_LARGE",
+                stage="writing",
                 details={"limit": self.limits.max_rows},
             )
         normalized: dict[str, str] = {}
         for column in self.columns:
             value = row.get(column, "")
-            cell = "" if value is None else str(value)
+            if isinstance(self.profile, QAOSCSVProfile) and column in ARRAY_COLUMNS:
+                try:
+                    cell = serialize_array(value)
+                except (TypeError, ValueError) as exc:
+                    raise QAOSCommonError(
+                        "Invalid QAOS array cell",
+                        code="QAOS_SCHEMA_INVALID",
+                        stage="writing",
+                        details={"column": column},
+                    ) from exc
+            else:
+                cell = "" if value is None else str(value)
+                if self.profile.scalar_newlines == "space":
+                    cell = cell.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
             size = len(cell.encode("utf-8"))
             if size > self.limits.max_cell_bytes:
                 raise CSVLimitError(
                     "CSV cell exceeds the configured limit",
                     code="CSV_CELL_TOO_LARGE",
+                    stage="writing",
                     details={
                         "row_number": self._rows_written + 2,
                         "column": column,
@@ -107,26 +129,51 @@ class CSVWriter:
                 code="QAOS_SCHEMA_INVALID",
                 details={"row_number": self._rows_written + 2, "extra": extra},
             )
-        self._writer.writerow(normalized)
+        self._emit([normalized[column] for column in self.columns])
         self._rows_written += 1
-        self._enforce_output_size()
 
-    def _enforce_output_size(self) -> None:
+    def _emit(self, values: Sequence[str]) -> None:
+        for value in values:
+            if len(value.encode("utf-8")) > self.limits.max_cell_bytes:
+                raise CSVLimitError(
+                    "CSV cell exceeds the configured limit",
+                    code="CSV_CELL_TOO_LARGE",
+                    stage="writing",
+                )
+        buffer = io.StringIO(newline="")
+        csv.writer(
+            buffer,
+            delimiter=self.profile.delimiter,
+            lineterminator="\r\n",
+            quoting=self.profile.quoting,
+        ).writerow(values)
+        text = buffer.getvalue()[:-2] + self.profile.line_ending
+        self._write_bytes(self._encoder.encode(text))
+
+    def _write_bytes(self, payload: bytes) -> None:
         assert self._stream is not None
-        self._stream.flush()
-        size = self._stream.buffer.tell()
+        size = self._bytes_written + len(payload)
         if size > self.limits.max_output_bytes:
             raise CSVLimitError(
                 "CSV output exceeds the configured limit",
                 code="CSV_OUTPUT_TOO_LARGE",
+                stage="writing",
                 details={"size": size, "limit": self.limits.max_output_bytes},
             )
+        view = memoryview(payload)
+        while view:
+            written = self._stream.write(view)
+            if written is None or written <= 0:
+                raise OSError("CSV stream did not accept output")
+            view = view[written:]
+        self._bytes_written = size
 
     def _abort(self) -> None:
-        if self._stream is not None and not self._stream.closed:
+        if self.destination is not None and self._stream is not None and not self._stream.closed:
             self._stream.close()
         if self._temporary_path is not None and self._temporary_path.exists():
             if self.keep_checkpoint_on_error:
+                assert self.destination is not None
                 checkpoint = self.destination.with_suffix(self.destination.suffix + ".checkpoint")
                 os.replace(self._temporary_path, checkpoint)
                 self.checkpoint_path = checkpoint
@@ -137,6 +184,9 @@ class CSVWriter:
         if exc_type is not None:
             self._abort()
             return
+        if self.destination is None:
+            self._stream = None
+            return
         assert self._stream is not None and self._temporary_path is not None
         try:
             self._stream.flush()
@@ -144,7 +194,11 @@ class CSVWriter:
             self._stream.close()
             if self.destination.exists() and not self.overwrite:
                 raise FileExistsError(f"Destination already exists: {self.destination}")
-            os.replace(self._temporary_path, self.destination)
+            if self.overwrite:
+                os.replace(self._temporary_path, self.destination)
+            else:
+                os.link(self._temporary_path, self.destination)
+                self._temporary_path.unlink()
             self._temporary_path = None
         except BaseException:
             self._abort()
@@ -154,9 +208,10 @@ class CSVWriter:
 class QAOSCSVWriter(CSVWriter):
     def __init__(
         self,
-        destination: str | PathLike[str],
+        destination: str | PathLike[str] | BinaryIO,
         *,
         columns: Sequence[str] = QAOS_COLUMNS,
+        profile: QAOSCSVProfile | None = None,
         limits: ProcessingLimits = DEFAULT_LIMITS,
         overwrite: bool = False,
         input_path: str | PathLike[str] | None = None,
@@ -165,7 +220,7 @@ class QAOSCSVWriter(CSVWriter):
         super().__init__(
             destination,
             columns=columns,
-            profile=QAOSCSVProfile(),
+            profile=profile or QAOSCSVProfile(),
             limits=limits,
             overwrite=overwrite,
             input_path=input_path,
@@ -176,7 +231,7 @@ class QAOSCSVWriter(CSVWriter):
 class DictionaryCSVWriter(CSVWriter):
     def __init__(
         self,
-        destination: str | PathLike[str],
+        destination: str | PathLike[str] | BinaryIO,
         *,
         columns: Sequence[str] = DICTIONARY_COLUMNS,
         profile: DictionaryCSVProfile | None = None,
@@ -194,4 +249,21 @@ class DictionaryCSVWriter(CSVWriter):
         )
 
 
-__all__ = ["CSVWriter", "DictionaryCSVWriter", "QAOSCSVWriter"]
+__all__ = ["CSVWriter", "DictionaryCSVWriter", "QAOSCSVWriter", "serialize_csv"]
+
+
+def serialize_csv(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    columns: Sequence[str] = QAOS_COLUMNS,
+    profile: CSVProfile | None = None,
+    limits: ProcessingLimits = DEFAULT_LIMITS,
+) -> bytes:
+    """Serialize to bytes with the same guards as path and binary-stream output."""
+    stream = io.BytesIO()
+    with CSVWriter(
+        stream, columns=columns, profile=profile or QAOSCSVProfile(), limits=limits
+    ) as writer:
+        for row in rows:
+            writer.write_row(row)
+    return stream.getvalue()

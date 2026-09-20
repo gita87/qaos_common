@@ -7,6 +7,8 @@ server, AI client, prompt, or product-specific conversion workflow.
 
 Requires Python 3.11–3.13.
 
+See the normative [QAOS 1.0 contract](docs/contract-v1.md) and migration notes for 0.2.0.
+
 ## Install
 
 ```bash
@@ -46,7 +48,10 @@ with QAOSCSVReader("input.tsv") as reader:
 
 Readers accept paths, bytes, and binary/text streams; tolerate UTF-8 BOM and LF/CRLF; and yield
 one row at a time. Writers serialize to a unique temporary file and atomically publish only on
-success. Existing destinations and the declared input path are protected unless `overwrite=True`.
+success. Binary stream destinations stay open; `serialize_csv(rows)` returns identical bytes.
+QAOS writers default to QUOTE_ALL and normalize scalar newlines to spaces; arrays are compact
+JSON with escaped newlines. Set `QAOSCSVProfile(scalar_newlines="preserve")` for multiline cells.
+Existing destinations and the declared input path are protected unless `overwrite=True`.
 Use `DictionaryCSVProfile(write_bom=..., line_ending=...)` for dictionary exports.
 
 ## Parse and protect rich content

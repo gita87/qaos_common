@@ -9,6 +9,7 @@ from qaos_common.csvio import (
     CSVReader,
     DictionaryCSVProfile,
     DictionaryCSVWriter,
+    QAOSCSVProfile,
     QAOSCSVReader,
     QAOSCSVWriter,
 )
@@ -26,7 +27,7 @@ def qaos_row(text: str = "Question") -> dict[str, str]:
 
 def test_qaos_round_trip_is_streaming_and_exact(tmp_path: Path) -> None:
     target = tmp_path / "qaos.tsv"
-    with QAOSCSVWriter(target) as writer:
+    with QAOSCSVWriter(target, profile=QAOSCSVProfile(scalar_newlines="preserve")) as writer:
         writer.write_row(qaos_row("line 1\nline 2\tquoted"))
     with QAOSCSVReader(target) as reader:
         validate_qaos_headers(reader.headers)

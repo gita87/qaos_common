@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from qaos_common.errors import OriginalImageError
 from qaos_common.rich_content.data_uri import validate_image_data_uri
@@ -16,6 +16,8 @@ class OriginalImageRecord(TypedDict):
     index: int
     original_mime: str
     original_data_uri: str
+    style: NotRequired[str]
+    value_path: NotRequired[list[str | int]]
 
 
 _FIELDS = ("column", "index", "original_mime", "original_data_uri")
@@ -52,12 +54,24 @@ def validate_original_image(record: Mapping[str, Any]) -> OriginalImageRecord:
             code="ORIGINAL_IMAGE_INVALID",
             details={"original_mime": mime, "data_uri_mime": parsed.mime_type},
         )
-    return {
+    result: OriginalImageRecord = {
         "column": str(record["column"]),
         "index": index,
         "original_mime": mime,
         "original_data_uri": uri,
     }
+    if "style" in record:
+        if not isinstance(record["style"], str):
+            raise OriginalImageError("Invalid style", code="ORIGINAL_IMAGE_INVALID")
+        result["style"] = record["style"]
+    if "value_path" in record:
+        path = record["value_path"]
+        if not isinstance(path, list) or any(
+            isinstance(x, bool) or not isinstance(x, (str, int)) for x in path
+        ):
+            raise OriginalImageError("Invalid value_path", code="ORIGINAL_IMAGE_INVALID")
+        result["value_path"] = list(path)
+    return result
 
 
 def parse_original_images(value: str | None) -> list[OriginalImageRecord]:

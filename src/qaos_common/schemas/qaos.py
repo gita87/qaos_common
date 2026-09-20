@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -9,6 +10,29 @@ from typing import Any, Literal
 from qaos_common.errors import SchemaValidationError
 
 QAOS_SCHEMA_VERSION = "qaos/1.0"
+RICH_CONTENT_FORMAT = "qaos-html/1"
+OPTION_LETTERS = tuple("abcdefghi")
+ARRAY_COLUMNS = ("flip_front", "flip_back", "train")
+RICH_TEXT_COLUMNS = (
+    "question_text",
+    *(f"option_{x}" for x in OPTION_LETTERS),
+    *(f"option_{x}_image" for x in OPTION_LETTERS),
+    "explanation",
+    *ARRAY_COLUMNS,
+)
+
+
+def serialize_array(value: Any) -> str:
+    """Canonical compact JSON; blank legacy cells become empty arrays."""
+    if value is None or (isinstance(value, str) and not value):
+        value = []
+    elif isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("QAOS array cell must be a JSON array")
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
 QAOS_COLUMNS = (
     "question_number",
     "question_text",
@@ -111,12 +135,17 @@ def validate_qaos_row(row: Mapping[str, Any], *, row_number: int | None = None) 
 
 
 __all__ = [
+    "ARRAY_COLUMNS",
     "NON_GENERATION_COLUMNS",
     "OPTION_IMAGE_MAP",
+    "OPTION_LETTERS",
     "QAOS_COLUMNS",
     "QAOS_SCHEMA_VERSION",
+    "RICH_CONTENT_FORMAT",
+    "RICH_TEXT_COLUMNS",
     "HeaderValidationResult",
     "ValidationMode",
+    "serialize_array",
     "validate_qaos_headers",
     "validate_qaos_row",
 ]

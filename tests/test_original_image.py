@@ -49,3 +49,11 @@ def test_mime_disagreement_is_rejected() -> None:
     bad["original_mime"] = "image/jpeg"
     with pytest.raises(OriginalImageError):
         serialize_original_images([bad])
+
+
+def test_consumer_provenance_extensions_survive():
+    original = {**record(), "style": "width:12px", "value_path": ["0", "back", 1]}
+    assert parse_original_images(serialize_original_images([original])) == [original]
+    for key, value in [("style", 7), ("value_path", [True]), ("value_path", "0")]:
+        with pytest.raises(OriginalImageError):
+            serialize_original_images([{**record(), key: value}])

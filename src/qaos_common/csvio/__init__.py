@@ -2,7 +2,7 @@
 
 from .profiles import CSVProfile, DictionaryCSVProfile, QAOSCSVProfile
 from .reader import CSVReader, DictionaryCSVReader, QAOSCSVReader
-from .writer import CSVWriter, DictionaryCSVWriter, QAOSCSVWriter
+from .writer import CSVWriter, DictionaryCSVWriter, QAOSCSVWriter, serialize_csv
 
 __all__ = [
     "CSVProfile",
@@ -14,4 +14,5 @@ __all__ = [
     "QAOSCSVProfile",
     "QAOSCSVReader",
     "QAOSCSVWriter",
+    "serialize_csv",
 ]

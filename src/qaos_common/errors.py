@@ -36,12 +36,22 @@ class QAOSCommonError(Exception):
         message: str,
         *,
         code: str | None = None,
+        stage: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
+        self.stage = redact_sensitive(stage)
         self.code = code or self.default_code
         self.message = str(redact_sensitive(message))
         self.details = redact_sensitive(dict(details or {}))
         super().__init__(self.message)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "stage": self.stage,
+            "details": self.details,
+        }
 
     def __str__(self) -> str:
         return f"[{self.code}] {self.message}"
