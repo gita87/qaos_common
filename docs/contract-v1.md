@@ -1,6 +1,6 @@
 # QAOS interchange contract
 
-Schema ID: `qaos/1.0`. Rich-content ID: `qaos-html/1`. Package release: `0.2.1`.
+Schema ID: `qaos/1.0`. Rich-content ID: `qaos-html/1`. Package release: `0.2.2`.
 Schema IDs describe data, not Python package versions. The 26 columns in `QAOS_COLUMNS`
 are authoritative, in order. `qaos_schema` in the DOCX engine remains an import shim.
 
@@ -34,6 +34,10 @@ Readers additionally accept legacy object/Python-literal representations. Image 
 and DOCX media budgets remain consumer responsibilities.
 
 Native provenance mappings/lists are accepted as well as serialized representations.
+From 0.2.2, QAOSCSVWriter and the default serialize_csv profile also canonicalize
+original_image: every accepted input emits compact JSON; empty/None emits []. Invalid
+provenance is rejected before its row is written. A generic CSVProfile preserves the
+original cell string for consumers that require exact cell-value preservation.
 `ParsedCell.__repr__` contains lengths/counts/flags only, never original or plain cell text.
 Dictionary spans include the tagger's `data-dict-id` attribute; LaTeX protection includes
 matching `\\begin{...}...\\end{...}` environments.

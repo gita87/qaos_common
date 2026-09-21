@@ -1,3 +1,11 @@
+# 0.2.2
+
+- Align QAOS CSV provenance serialization with row validation: native mappings/lists,
+  legacy values and JSON input emit a validated compact JSON array; blank values emit [].
+- Reject invalid provenance before writing its row, with writing-stage and row/column
+  context. Generic CSVProfile remains available for exact cell-value preservation.
+- Add path/stream/bytes regression tests for every supported provenance representation.
+
 # 0.2.1
 
 - Enforce upload budgets while reading binary/text streams, including non-seekable

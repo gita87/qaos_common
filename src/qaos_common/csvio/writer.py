@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import csv
 import io
+import json
 import os
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
@@ -15,6 +16,7 @@ from typing import Any, BinaryIO
 from qaos_common.errors import CSVLimitError, QAOSCommonError
 from qaos_common.limits import DEFAULT_LIMITS, ProcessingLimits
 from qaos_common.schemas.dictionary import DICTIONARY_COLUMNS
+from qaos_common.schemas.original_image import parse_original_images
 from qaos_common.schemas.qaos import ARRAY_COLUMNS, QAOS_COLUMNS, serialize_array
 
 from .profiles import CSVProfile, DictionaryCSVProfile, QAOSCSVProfile
@@ -97,12 +99,33 @@ class CSVWriter:
             if isinstance(self.profile, QAOSCSVProfile) and column in ARRAY_COLUMNS:
                 try:
                     cell = serialize_array(value)
-                except (TypeError, ValueError) as exc:
+                except (TypeError, ValueError, OverflowError, RecursionError) as exc:
                     raise QAOSCommonError(
                         "Invalid QAOS array cell",
                         code="QAOS_SCHEMA_INVALID",
                         stage="writing",
-                        details={"column": column},
+                        details={"row_number": self._rows_written + 2, "column": column},
+                    ) from exc
+            elif isinstance(self.profile, QAOSCSVProfile) and column == "original_image":
+                try:
+                    cell = json.dumps(
+                        parse_original_images(value),
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        separators=(",", ":"),
+                    )
+                except (
+                    QAOSCommonError,
+                    TypeError,
+                    ValueError,
+                    OverflowError,
+                    RecursionError,
+                ) as exc:
+                    raise QAOSCommonError(
+                        "Invalid QAOS original_image cell",
+                        code="QAOS_SCHEMA_INVALID",
+                        stage="writing",
+                        details={"row_number": self._rows_written + 2, "column": column},
                     ) from exc
             else:
                 cell = "" if value is None else str(value)
@@ -127,6 +150,7 @@ class CSVWriter:
             raise QAOSCommonError(
                 "Row contains columns that are not in the writer schema",
                 code="QAOS_SCHEMA_INVALID",
+                stage="writing",
                 details={"row_number": self._rows_written + 2, "extra": extra},
             )
         self._emit([normalized[column] for column in self.columns])
