@@ -5,9 +5,10 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from os import PathLike
 from pathlib import Path
+from threading import RLock
 from typing import Any, BinaryIO, TextIO
 
 from qaos_common.errors import CSVLimitError, QAOSCommonError
@@ -16,6 +17,72 @@ from qaos_common.limits import DEFAULT_LIMITS, ProcessingLimits
 from .profiles import CSVProfile, DictionaryCSVProfile, QAOSCSVProfile
 
 InputSource = str | PathLike[str] | bytes | bytearray | BinaryIO | TextIO
+
+_FIELD_LIMIT_LOCK = RLock()
+
+
+@contextmanager
+def _parser_limit(limit: int) -> Iterator[None]:
+    # Lock only a parser operation, never a reader lifetime or a yielded row.
+    # Nested readers and readers closed in any order cannot restore stale limits.
+    with _FIELD_LIMIT_LOCK:
+        previous = csv.field_size_limit()
+        csv.field_size_limit(limit)
+        try:
+            yield
+        finally:
+            csv.field_size_limit(previous)
+
+
+def _check_upload_size(size: int, limit: int) -> None:
+    if size > limit:
+        raise CSVLimitError(
+            "CSV input exceeds the configured upload limit",
+            code="CSV_FILE_TOO_LARGE",
+            stage="reading",
+            details={"size": size, "limit": limit},
+        )
+
+
+class _BoundedBinary(io.RawIOBase):
+    """Read at most the budget plus one byte; never close the caller's stream."""
+
+    def __init__(self, source: BinaryIO, limit: int) -> None:
+        self.source = source
+        self.limit = limit
+        self.size = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        data = self.source.read(min(len(buffer), max(1, self.limit - self.size + 1)))
+        if data is None:
+            raise BlockingIOError("CSV input requires a blocking binary stream")
+        self.size += len(data)
+        _check_upload_size(self.size, self.limit)
+        buffer[: len(data)] = data
+        return len(data)
+
+
+class _BoundedTextLines:
+    """Count UTF-8 bytes of supplied text, including BOM and line separators."""
+
+    def __init__(self, source: TextIO, limit: int) -> None:
+        self.source = source
+        self.limit = limit
+        self.size = 0
+
+    def __iter__(self) -> _BoundedTextLines:
+        return self
+
+    def __next__(self) -> str:
+        line = self.source.readline(max(1, self.limit - self.size + 1))
+        if not line:
+            raise StopIteration
+        self.size += len(line.encode("utf-8"))
+        _check_upload_size(self.size, self.limit)
+        return line
 
 
 class CSVReader:
@@ -35,67 +102,92 @@ class CSVReader:
         self._text_stream: TextIO | None = None
         self._owned_streams: list[Any] = []
         self._reader: csv.DictReader[str] | None = None
-        self._previous_field_limit: int | None = None
         self._rows_read = 0
-        self._external_wrapper: io.TextIOWrapper | None = None
 
     def __enter__(self) -> CSVReader:
-        self._open()
+        if self._reader is not None:
+            raise RuntimeError("Reader is already open")
+        try:
+            self._open()
+        except BaseException:
+            self.close()
+            raise
         return self
 
     def _open(self) -> None:
-        if self._reader is not None:
-            raise RuntimeError("Reader is already open")
+        self._rows_read = 0
+        self.headers = ()
         stream: TextIO
+        binary: BinaryIO | None = None
         if isinstance(self.source, (str, PathLike)):
             path = Path(self.source)
             size = path.stat().st_size
-            self._enforce_upload_size(size)
+            _check_upload_size(size, self.limits.max_upload_bytes)
             binary = path.open("rb")
             self._owned_streams.append(binary)
-            stream = io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")
-            self._owned_streams.append(stream)
         elif isinstance(self.source, (bytes, bytearray)):
             raw = bytes(self.source)
-            self._enforce_upload_size(len(raw))
-            bytes_stream: BinaryIO = io.BytesIO(raw)
-            stream = io.TextIOWrapper(bytes_stream, encoding="utf-8-sig", newline="")
-            self._owned_streams.extend((bytes_stream, stream))
+            _check_upload_size(len(raw), self.limits.max_upload_bytes)
+            binary = io.BytesIO(raw)
+            self._owned_streams.append(binary)
         elif isinstance(self.source, io.TextIOBase) or isinstance(self.source.read(0), str):
             stream = self.source  # type: ignore[assignment]
         else:
             binary = self.source  # type: ignore[assignment]
-            stream = io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")
-            self._external_wrapper = stream
+
+        if binary is not None:
+            bounded = _BoundedBinary(binary, self.limits.max_upload_bytes)
+            buffered = io.BufferedReader(bounded)
+            stream = io.TextIOWrapper(buffered, encoding="utf-8-sig", newline="")
+            self._owned_streams.extend((bounded, buffered, stream))
 
         self._text_stream = stream
-        self._previous_field_limit = csv.field_size_limit()
-        # Keep csv's parser ceiling explicit while allowing the post-parse byte check
-        # below to identify the exact offending column (csv itself only reports a row).
-        csv.field_size_limit(self.limits.max_upload_bytes)
         try:
-            reader = csv.DictReader(stream, delimiter=self.profile.delimiter)
-            raw_headers = list(reader.fieldnames) if reader.fieldnames is not None else None
+            reader = csv.DictReader(
+                _BoundedTextLines(stream, self.limits.max_upload_bytes),
+                delimiter=self.profile.delimiter,
+                strict=True,
+            )
+            with _parser_limit(self.limits.max_upload_bytes):
+                raw_headers = list(reader.fieldnames) if reader.fieldnames is not None else None
         except (csv.Error, UnicodeError) as exc:
-            self.close()
             raise QAOSCommonError(
                 "Could not read the CSV header",
                 code="QAOS_SCHEMA_INVALID",
+                stage="reading",
                 details={"row_number": 1},
             ) from exc
-        if raw_headers is None:
-            self.close()
-            raise QAOSCommonError("CSV is empty", code="QAOS_SCHEMA_INVALID")
+        if not raw_headers:
+            raise QAOSCommonError("CSV is empty", code="QAOS_SCHEMA_INVALID", stage="reading")
         raw_headers[0] = raw_headers[0].removeprefix("\ufeff")
+        if any(not name.strip() for name in raw_headers) or len(set(raw_headers)) != len(
+            raw_headers
+        ):
+            raise QAOSCommonError(
+                "CSV headers must be non-empty and unique",
+                code="QAOS_SCHEMA_INVALID",
+                stage="reading",
+                details={"row_number": 1},
+            )
+        for column in raw_headers:
+            self._check_cell(column, column=column, row_number=1)
+        reader.fieldnames = raw_headers
         self.headers = tuple(raw_headers)
         self._reader = reader
 
-    def _enforce_upload_size(self, size: int) -> None:
-        if size > self.limits.max_upload_bytes:
+    def _check_cell(self, cell: str, *, column: str, row_number: int) -> None:
+        size = len(cell.encode("utf-8"))
+        if size > self.limits.max_cell_bytes:
             raise CSVLimitError(
-                "CSV input exceeds the configured upload limit",
-                code="CSV_FILE_TOO_LARGE",
-                details={"size": size, "limit": self.limits.max_upload_bytes},
+                "CSV cell exceeds the configured limit",
+                code="CSV_CELL_TOO_LARGE",
+                stage="reading",
+                details={
+                    "row_number": row_number,
+                    "column": column,
+                    "size": size,
+                    "limit": self.limits.max_cell_bytes,
+                },
             )
 
     def __iter__(self) -> Iterator[tuple[int, dict[str, str]]]:
@@ -103,13 +195,15 @@ class CSVReader:
             raise RuntimeError("Use CSVReader as a context manager")
         while True:
             try:
-                row = next(self._reader)
+                with _parser_limit(self.limits.max_upload_bytes):
+                    row = next(self._reader)
             except StopIteration:
                 return
             except (csv.Error, UnicodeError) as exc:
                 row_number = self._reader.line_num
                 raise QAOSCommonError(
                     "CSV row could not be parsed",
+                    stage="reading",
                     code=(
                         "CSV_CELL_TOO_LARGE"
                         if "field larger" in str(exc)
@@ -123,44 +217,29 @@ class CSVReader:
                 raise CSVLimitError(
                     "CSV has more rows than the configured limit",
                     code="CSV_FILE_TOO_LARGE",
+                    stage="reading",
                     details={"row_number": row_number, "limit": self.limits.max_rows},
                 )
             if None in row:
                 raise QAOSCommonError(
                     "CSV row contains more fields than its header",
                     code="QAOS_SCHEMA_INVALID",
+                    stage="reading",
                     details={"row_number": row_number},
                 )
             cleaned: dict[str, str] = {}
             for column, value in row.items():
                 cell = "" if value is None else value
-                size = len(cell.encode("utf-8"))
-                if size > self.limits.max_cell_bytes:
-                    raise CSVLimitError(
-                        "CSV cell exceeds the configured limit",
-                        code="CSV_CELL_TOO_LARGE",
-                        details={
-                            "row_number": row_number,
-                            "column": column,
-                            "size": size,
-                            "limit": self.limits.max_cell_bytes,
-                        },
-                    )
+                self._check_cell(cell, column=column, row_number=row_number)
                 cleaned[column] = cell
             yield row_number, cleaned
 
     def close(self) -> None:
-        if self._previous_field_limit is not None:
-            csv.field_size_limit(self._previous_field_limit)
-            self._previous_field_limit = None
         for stream in reversed(self._owned_streams):
             with suppress(OSError, ValueError):
                 stream.close()
         self._owned_streams.clear()
-        if self._external_wrapper is not None:
-            with suppress(OSError, ValueError):
-                self._external_wrapper.detach()
-            self._external_wrapper = None
+        self._text_stream = None
         self._reader = None
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:

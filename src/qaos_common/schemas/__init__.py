@@ -3,6 +3,7 @@
 from .dictionary import (
     DICTIONARY_COLUMNS,
     DICTIONARY_SCHEMA_VERSION,
+    MISSING_DICTIONARY_IMAGE,
     validate_dictionary_headers,
     validate_dictionary_row,
     validate_dictionary_rows,
@@ -33,6 +34,7 @@ __all__ = [
     "ARRAY_COLUMNS",
     "DICTIONARY_COLUMNS",
     "DICTIONARY_SCHEMA_VERSION",
+    "MISSING_DICTIONARY_IMAGE",
     "NON_GENERATION_COLUMNS",
     "OPTION_IMAGE_MAP",
     "OPTION_LETTERS",

@@ -1,4 +1,5 @@
 import base64
+from dataclasses import replace
 
 import pytest
 
@@ -98,3 +99,27 @@ def test_custom_literal_and_pattern_protection() -> None:
     )
     assert len(protected.segments) == 2
     assert protected.restore() == "one SECRET two ID-42"
+
+
+def test_parsed_cell_repr_never_exposes_payload_even_when_constructed_directly():
+    uri = build_data_uri(PNG + b"PRIVATE_SENTINEL" * 8, "image/png")
+    payload = uri.split(",", 1)[1]
+    parsed = parse_cell(f'<p>Safe</p><img src="{uri}">')
+    for candidate in (parsed, replace(parsed, plain_text=uri)):
+        rendered = repr(candidate)
+        assert payload not in rendered and uri not in rendered
+        assert "image_count=1" in rendered
+    assert parsed.original.endswith(f'<img src="{uri}">')
+    assert parsed.plain_text == "Safe"
+
+
+def test_tagger_dictionary_markup_and_latex_environment_are_protected():
+    tagged = '<span data-dict-id="0001">apple</span>'
+    latex = r"\begin{equation}apple + 1\end{equation}"
+    source = f"{tagged} {latex} apple"
+    protected = protect_segments(source)
+    assert protected.text.count("apple") == 1
+    assert protected.restore() == source
+    parsed = parse_cell(source)
+    assert parsed.contains_dictionary_tag and parsed.contains_latex
+    assert parsed.plain_text == "apple apple"

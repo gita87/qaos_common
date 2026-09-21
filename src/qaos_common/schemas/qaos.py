@@ -7,7 +7,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from qaos_common.errors import SchemaValidationError
+from qaos_common.errors import QAOSCommonError, SchemaValidationError
+
+from .original_image import parse_original_images
 
 QAOS_SCHEMA_VERSION = "qaos/1.0"
 RICH_CONTENT_FORMAT = "qaos-html/1"
@@ -124,14 +126,44 @@ def validate_qaos_headers(
     return _validate_headers(headers, QAOS_COLUMNS, mode, "QAOS_SCHEMA_INVALID")
 
 
-def validate_qaos_row(row: Mapping[str, Any], *, row_number: int | None = None) -> None:
+def validate_qaos_row(
+    row: Mapping[str, Any], *, row_number: int | None = None, mode: ValidationMode = "strict"
+) -> None:
+    """Validate row structure and encoded arrays/provenance, without rewriting cells.
+
+    Compatible mode permits extra columns; it does not permit invalid cell values.
+    Question identifiers and answer meanings remain consumer-specific.
+    """
+    if mode not in ("strict", "compatible"):
+        raise ValueError("mode must be 'strict' or 'compatible'")
     missing = tuple(column for column in QAOS_COLUMNS if column not in row)
-    if missing:
+    extra = tuple(column for column in row if column not in QAOS_COLUMNS)
+    if missing or (mode == "strict" and extra):
         raise SchemaValidationError(
-            "QAOS row is missing required columns",
+            "QAOS row columns do not satisfy the schema contract",
             code="QAOS_SCHEMA_INVALID",
-            details={"row_number": row_number, "missing": missing},
+            stage="validating",
+            details={"row_number": row_number, "missing": missing, "extra": extra, "mode": mode},
         )
+    for column in ARRAY_COLUMNS:
+        try:
+            serialize_array(row[column])
+        except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+            raise SchemaValidationError(
+                "QAOS array cell is invalid",
+                code="QAOS_SCHEMA_INVALID",
+                stage="validating",
+                details={"row_number": row_number, "column": column},
+            ) from exc
+    try:
+        parse_original_images(row["original_image"])
+    except (QAOSCommonError, TypeError, ValueError, RecursionError) as exc:
+        raise SchemaValidationError(
+            "QAOS original_image cell is invalid",
+            code="QAOS_SCHEMA_INVALID",
+            stage="validating",
+            details={"row_number": row_number, "column": "original_image"},
+        ) from exc
 
 
 __all__ = [

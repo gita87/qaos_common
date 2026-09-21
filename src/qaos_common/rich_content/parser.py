@@ -8,16 +8,17 @@ from dataclasses import dataclass
 from bs4 import BeautifulSoup, Comment
 
 from .data_uri import find_data_uris
-from .protected_segments import ProtectedSegment, protect_segments
-
-_HTML_RE = re.compile(r"</?[A-Za-z][^>]*>")
-_LATEX_RE = re.compile(r"\$\$.*?\$\$|\\\[.*?\\\]|\\\(.*?\\\)|(?<!\\)\$(?!\$).*?(?<!\\)\$", re.S)
-_DICTIONARY_RE = re.compile(
-    r"<span\b(?=[^>]*(?:data-dictionary|class=[\"'][^\"']*dictionary))", re.I
+from .protected_segments import (
+    _DICTIONARY_SPAN_RE,
+    _LATEX_RE,
+    ProtectedSegment,
+    protect_segments,
 )
 
+_HTML_RE = re.compile(r"</?[A-Za-z][^>]*>")
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class ParsedCell:
     original: str
     plain_text: str
@@ -28,13 +29,25 @@ class ParsedCell:
     contains_dictionary_tag: bool
     protected_segments: tuple[ProtectedSegment, ...]
 
+    def __repr__(self) -> str:
+        # Never include original or plain_text: callers can construct this public
+        # dataclass directly, and malformed payloads may not be recognized by parsing.
+        return (
+            f"ParsedCell(original_chars={len(self.original)}, "
+            f"plain_text_chars={len(self.plain_text)}, contains_html={self.contains_html}, "
+            f"contains_latex={self.contains_latex}, contains_image={self.contains_image}, "
+            f"image_count={self.image_count}, "
+            f"contains_dictionary_tag={self.contains_dictionary_tag}, "
+            f"protected_segments={len(self.protected_segments)})"
+        )
+
 
 def parse_cell(value: str | None) -> ParsedCell:
     original = "" if value is None else str(value)
     images = find_data_uris(original)
     contains_latex = _LATEX_RE.search(original) is not None
     contains_html = _HTML_RE.search(original) is not None
-    contains_dictionary_tag = _DICTIONARY_RE.search(original) is not None
+    contains_dictionary_tag = _DICTIONARY_SPAN_RE.search(original) is not None
     protected = protect_segments(original)
 
     # Remove protected payloads before parsing so they can never leak into visible text.

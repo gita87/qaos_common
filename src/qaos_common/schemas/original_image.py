@@ -74,19 +74,23 @@ def validate_original_image(record: Mapping[str, Any]) -> OriginalImageRecord:
     return result
 
 
-def parse_original_images(value: str | None) -> list[OriginalImageRecord]:
-    if value is None or not value.strip():
+def parse_original_images(
+    value: str | Mapping[str, Any] | Sequence[Mapping[str, Any]] | None,
+) -> list[OriginalImageRecord]:
+    if value is None or (isinstance(value, str) and not value.strip()):
         return []
-    try:
-        parsed: Any = json.loads(value)
-    except json.JSONDecodeError:
+    parsed: Any = value
+    if isinstance(value, str):
         try:
-            parsed = ast.literal_eval(value)
-        except (SyntaxError, ValueError) as exc:
-            raise OriginalImageError(
-                "original_image is neither valid JSON nor supported legacy data",
-                code="ORIGINAL_IMAGE_INVALID",
-            ) from exc
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            try:
+                parsed = ast.literal_eval(value)
+            except (SyntaxError, ValueError) as exc:
+                raise OriginalImageError(
+                    "original_image is neither valid JSON nor supported legacy data",
+                    code="ORIGINAL_IMAGE_INVALID",
+                ) from exc
     if isinstance(parsed, Mapping):
         parsed = [parsed]
     if not isinstance(parsed, Sequence) or isinstance(parsed, (str, bytes, bytearray)):

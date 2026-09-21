@@ -12,15 +12,21 @@ from qaos_common.errors import ProtectedSegmentError
 from .data_uri import _DATA_URI_RE
 
 _PLACEHOLDER_RE = re.compile(r"\[\[QAOS_PROTECTED_[A-Fa-f0-9]+_\d+\]\]")
+_DICTIONARY_SPAN_RE = re.compile(
+    r"<span\b(?=[^>]*(?:data-dict-id\s*=|data-dictionary|class=[\"'][^\"']*dictionary))"
+    r"[^>]*>.*?</span\s*>",
+    re.I | re.S,
+)
+_LATEX_RE = re.compile(
+    r"\\begin\{([^{}]+)\}.*?\\end\{\1\}"
+    r"|\$\$.*?\$\$|\\\[.*?\\\]|\\\(.*?\\\)|(?<!\\)\$(?!\$).*?(?<!\\)\$",
+    re.S,
+)
 _DEFAULT_PATTERNS = (
     re.compile(r"<(?:script|style)\b[^>]*>.*?</(?:script|style)\s*>", re.I | re.S),
     _DATA_URI_RE,
-    re.compile(
-        r"<span\b(?=[^>]*(?:data-dictionary|class=[\"'][^\"']*dictionary))"
-        r"[^>]*>.*?</span\s*>",
-        re.I | re.S,
-    ),
-    re.compile(r"\$\$.*?\$\$|\\\[.*?\\\]|\\\(.*?\\\)|(?<!\\)\$(?!\$).*?(?<!\\)\$", re.S),
+    _DICTIONARY_SPAN_RE,
+    _LATEX_RE,
     re.compile(r"(?<=\s)(?:[A-Za-z_:][-\w:.]*\s*=\s*(?:\"[^\"]*\"|'[^']*'))"),
 )
 

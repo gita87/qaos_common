@@ -7,7 +7,10 @@ server, AI client, prompt, or product-specific conversion workflow.
 
 Requires Python 3.11–3.13.
 
-See the normative [QAOS 1.0 contract](docs/contract-v1.md) and migration notes for 0.2.0.
+See the normative [QAOS 1.0 contract](docs/contract-v1.md) and
+[consumer contract map](docs/consumer-contracts.md). Version 0.2.1 strengthens the shared
+reference using actual dictionary, tagging and CSV-to-DOCX boundaries. This is local
+development under testing toward production readiness; consumer migrations remain separate.
 
 ## Install
 
@@ -47,7 +50,9 @@ with QAOSCSVReader("input.tsv") as reader:
 ```
 
 Readers accept paths, bytes, and binary/text streams; tolerate UTF-8 BOM and LF/CRLF; and yield
-one row at a time. Writers serialize to a unique temporary file and atomically publish only on
+one row at a time. Upload budgets apply during reads for every input type. CSV parser limits
+are guarded per operation for nested/concurrent common readers. Writers serialize to a unique
+temporary file and atomically publish only on
 success. Binary stream destinations stay open; `serialize_csv(rows)` returns identical bytes.
 QAOS writers default to QUOTE_ALL and normalize scalar newlines to spaces; arrays are compact
 JSON with escaped newlines. Set `QAOSCSVProfile(scalar_newlines="preserve")` for multiline cells.
@@ -142,6 +147,10 @@ Migrate one consumer at a time and retain its old import surface as a compatibil
    cells with `contains_image`; use shared progress/cancellation while retaining image generation
    and conversion in the consumer.
 
+The [consumer contract map](docs/consumer-contracts.md) documents BOM/CRLF and `NA` dictionary
+compatibility, `data-dict-id` markup, preservation versus canonical export, and the renderer's
+26-column input versus 28 output slots. It includes an optional live probe for all three projects.
+
 For each migration, run the consumer's tests before and after, validate the output headers, and
 round-trip an unchanged fixture byte/cell-wise. See [contract tests](docs/contract-tests.md).
 
@@ -156,4 +165,3 @@ python -m build
 
 The large-cell test creates data in a temporary directory at runtime; large binary fixtures are
 not committed to the repository.
-

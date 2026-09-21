@@ -1,3 +1,17 @@
+# 0.2.1
+
+- Enforce upload budgets while reading binary/text streams, including non-seekable
+  inputs and files that grow after opening; preserve caller stream ownership.
+- Isolate CSV parser limits per parsing operation for nested/concurrent readers;
+  restore the global setting on success and failure. Reject malformed CSV headers.
+- Remove all cell text from ParsedCell repr; protect data-dict-id spans and LaTeX
+  environments emitted/handled by the dictionary tagger.
+- Validate QAOS extra columns, array contents and image provenance with row context.
+  Compatible mode permits extra columns, not invalid values. Retain legacy blank cells.
+- Accept the existing dictionary/1.0 NA image sentinel; preserve native image metadata.
+- Add real dictionary/tagger fixtures, an opt-in live consumer probe, and portable
+  atomic-writer failure tests. Consumer implementations remain independent.
+
 # 0.2.0
 
 - Finalize qaos/1.0 and qaos-html/1 contracts and compact array cells.
@@ -19,4 +33,3 @@ All notable changes follow Keep a Changelog and Semantic Versioning.
 - Rich-content, data-URI, and protected-segment utilities.
 - Canonical and legacy-safe `original_image` handling.
 - Shared limits, progress, cancellation, and structured errors.
-
