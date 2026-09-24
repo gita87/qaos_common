@@ -1,0 +1,41 @@
+name: quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest --cov=qaos_common --cov-report=term-missing
+      - run: ruff check .
+      - run: mypy src
+
+  build:
+    name: build and inspect artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: rm -rf dist-ci && python -m build --outdir dist-ci
+      - run: python -m zipfile -l dist-ci/*.whl
+      - run: tar -tzf dist-ci/*.tar.gz | grep 'src/qaos_common/py.typed'
+      - run: sha256sum dist-ci/*

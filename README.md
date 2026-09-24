@@ -9,7 +9,8 @@ Requires Python 3.11–3.13.
 
 See the normative [QAOS 1.0 contract](docs/contract-v1.md) and
 [consumer contract map](docs/consumer-contracts.md). Version 0.2.2 is the current local
-baseline for consumer standardization; see [installation and verification](docs/consumer-readiness.md).
+baseline for consumer standardization; see [installation and verification](docs/consumer-readiness.md)
+and the [integration-readiness handoff](docs/integration-readiness.md).
 Version 0.2.1 strengthened the shared
 reference using actual dictionary, tagging and CSV-to-DOCX boundaries. This is local
 development under testing toward production readiness; consumer migrations remain separate.
