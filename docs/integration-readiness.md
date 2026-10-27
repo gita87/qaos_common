@@ -122,22 +122,23 @@ state restoration. No client document data is used.
 
 ## Clean install and artifact verification
 
-The current consumer baseline remains **0.2.2**. Existing artifacts are kept;
-they are not overwritten by this readiness work.
+The dependency candidate is **0.2.3**; the verified historical release remains 0.2.2.
+Existing artifacts are kept; the new candidate is stored in `dist/candidate-0.2.3/`.
+In a clean CPython 3.11 environment, 126 tests passed with Pillow 13.0.0 and `pip check` passed. The complete downstream QAOS Engine installation is separately blocked by `convert-csv-to-docx 0.1.0`, which requires Pillow <13; see the candidate release handoff.
 
 ```sh
 python -m pip install --force-reinstall \
-  /Users/gitasuputra/Projects/qaos_common/dist/qaos_common-0.2.2-py3-none-any.whl
+  /Users/gitasuputra/Projects/qaos_common/dist/candidate-0.2.3/qaos_common-0.2.3-py3-none-any.whl
 python -m pip check
 python -c 'from importlib.metadata import version; import qaos_common; print(version("qaos-common")); print(qaos_common.__file__)'
-shasum -a 256 dist/qaos_common-0.2.2-py3-none-any.whl dist/qaos_common-0.2.2.tar.gz
+shasum -a 256 dist/candidate-0.2.3/qaos_common-0.2.3-py3-none-any.whl dist/candidate-0.2.3/qaos_common-0.2.3.tar.gz
 ```
 
 Recorded SHA-256 values:
 
 ```text
-f0218d9a9e670fdf997dd69c16c8eccb8bc55414a196c449f64c35d3959a0588  qaos_common-0.2.2-py3-none-any.whl
-31368af06d86c7b6d0385ea81d7f16fdf610d92c8eba25d74700caa9e748eb5c  qaos_common-0.2.2.tar.gz
+12a6877535faec97844a8459d73dadef202aac969549c6e6a676a3b8584e7299  qaos_common-0.2.3-py3-none-any.whl
+0904d16b61c85f674ff818a709482dad3bc7fb91c974403082c9824140cfb04d  qaos_common-0.2.3.tar.gz
 ```
 
 For a clean wheel smoke test, install the wheel into a fresh environment in a

@@ -1,10 +1,9 @@
 # Dependency baseline for consumer standardization
 
-Use **qaos-common 0.2.2** from this repository's `dist/qaos_common-0.2.2-py3-none-any.whl`.
-Use the same file and SHA-256 in every consumer; record the hash from
-`dist/SHA256SUMS-0.2.2`. Previous wheels remain available for reproducibility, but they are
-not the baseline for new migrations. Version 0.2.2 fixes canonical original_image export
-for native lists/mappings accepted by the validator. Schema identifiers do not change:
+The verified baseline remains **qaos-common 0.2.2**. A new **0.2.3 candidate** is at
+`dist/candidate-0.2.3/qaos_common-0.2.3-py3-none-any.whl`; use the verified 0.2.2 wheel
+for production until the candidate has passed regression and clean-install checks. Version
+0.2.3 only raises the optional images extra to Pillow >=13,<14. Schema identifiers do not change:
 `qaos/1.0`, `dictionary/1.0`, `qaos-html/1`.
 
 ## Install into the consumer's own Python environment
@@ -13,12 +12,12 @@ From the consumer project, use its supported interpreter (Python 3.11–3.13 dec
 Python 3.11 on macOS verified locally):
 
 ```sh
-python -m pip install /Users/gitasuputra/Projects/qaos_common/dist/qaos_common-0.2.2-py3-none-any.whl
+python -m pip install /Users/gitasuputra/Projects/qaos_common/dist/qaos_common-0.2.3-py3-none-any.whl
 python -m pip check
 python -c "from importlib.metadata import version; import qaos_common; print(version('qaos-common')); print(qaos_common.__file__)"
 ```
 
-Pin `qaos-common==0.2.2` in the consumer's dependency declaration, and keep the exact wheel
+Pin the selected, verified `qaos-common` version in the consumer's dependency declaration, and keep the exact wheel
 or an explicit local wheel installation step. The package is distributed locally, so a
 bare version pin does not provide a downloadable package from an index. Verify the wheel
 hash before installing; imports should resolve to that consumer's site-packages instead
@@ -58,3 +57,8 @@ Shared source tests, static checks, wheel/source equivalence, clean wheel instal
 and the real dictionary → tagger → DOCX boundary probe are release checks. Windows and
 Python 3.12/3.13 have not been run locally; their coverage must not be inferred from macOS.
 The existing portable writer tests cover safe failure when hard links are unsupported.
+
+
+Candidate status: the 0.2.3 wheel and sdist were built locally. Regression tests and
+clean consumer installation have not been run; do not treat this candidate as a verified
+release baseline yet.

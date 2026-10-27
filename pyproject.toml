@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qaos-common"
-version = "0.2.2"
+version = "0.2.3"
 description = "Shared, deterministic data contracts and utilities for QAOS projects"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-images = ["Pillow>=12.3,<13"]
+images = ["Pillow>=13,<14"]
 dev = [
   "pytest>=8,<9",
   "pytest-cov>=5,<8",
